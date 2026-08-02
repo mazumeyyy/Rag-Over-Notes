@@ -132,7 +132,7 @@ def build_vectorstore(chunks):
     VECTORSTORE_DIR.mkdir(exist_ok=True)
     vectorstore.save_local(str(VECTORSTORE_DIR))
 
-    print(f"✓ Vector store saved at: {VECTORSTORE_DIR}")
+    print(f"Vector store saved at: {VECTORSTORE_DIR}")
     return vectorstore
 
 
