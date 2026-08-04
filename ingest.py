@@ -10,10 +10,12 @@ and stores them in a FAISS vector database for retrieval.
 Supported formats:
 - .txt
 - .md
+- .pdf
 """
 
 # ── standard library imports ───────────────────────────────────────
-import os
+import re
+from collections import Counter
 from pathlib import Path
 
 # ── third-party imports ────────────────────────────────────────────
@@ -23,7 +25,7 @@ from dotenv import load_dotenv
 from langchain_community.document_loaders import (
     DirectoryLoader,
     TextLoader,
-    UnstructuredMarkdownLoader,
+    PyMuPDFLoader,
 )
 
 # text splitting
@@ -44,12 +46,70 @@ DATA_DIR = BASE_DIR / "data"
 VECTORSTORE_DIR = BASE_DIR / "vectorstore"
 
 
+# ── helpers ────────────────────────────────────────────────────────
+def _extract_metadata_from_path(file_path: str) -> dict:
+    """
+    Derive semester, subject, and chapter from the file's location
+    inside the data/ directory.
+
+    Expected layouts:
+      data/semester_N/<CourseCode>_<Subject>/Unit X-<Title>/file.ext
+      data/semester_N/Elective_I/<CourseCode>_<Subject>/Unit X-<Title>/file.ext
+    """
+    path = Path(file_path)
+
+    # Get the parts relative to data/
+    try:
+        rel = path.relative_to(DATA_DIR)
+    except ValueError:
+        return {}
+
+    parts = rel.parts  # e.g. ("semester_3", "CSC211_Data_...", "Unit 1-...", "file.pdf")
+
+    metadata: dict = {}
+
+    # ── Semester ──────────────────────────────────────────────────
+    if parts and parts[0].startswith("semester_"):
+        try:
+            metadata["semester"] = int(parts[0].split("_")[1])
+        except (IndexError, ValueError):
+            pass
+
+    # ── Subject & Chapter ─────────────────────────────────────────
+    # Determine the offset: if there's an "Elective_*" folder, subject
+    # and unit are one level deeper.
+    offset = 1  # default: subject folder is right under semester_N
+    if len(parts) > 1 and parts[1].lower().startswith("elective"):
+        offset = 2
+
+    # Subject
+    if len(parts) > offset:
+        subject_folder = parts[offset]
+        # Strip leading course code (e.g. "CSC115_") and convert underscores
+        subject_name = re.sub(r"^[A-Z]{2,4}\d+_", "", subject_folder)
+        metadata["subject"] = subject_name.replace("_", " ")
+
+    # Chapter / Unit
+    if len(parts) > offset + 1:
+        unit_folder = parts[offset + 1]
+        # e.g. "Unit 3-Input and Output" or "Unit 5-Dynamic Programming (8)"
+        m = re.match(r"Unit\s+(\d+)\s*-\s*(.+)", unit_folder)
+        if m:
+            metadata["chapter"] = f"Unit {m.group(1)} - {m.group(2).strip()}"
+        else:
+            metadata["chapter"] = unit_folder
+
+    return metadata
+
+
 # ──────────────────────────────────────────────────────────────────
 # 📥 Load documents
 # ──────────────────────────────────────────────────────────────────
 def load_documents():
     """
-    Load supported files (.txt, .md) from the data directory.
+    Load supported files (.txt, .md, .pdf) from the data directory,
+    attach semester / subject / chapter metadata derived from the
+    folder structure, and print a per-subject summary.
     """
     loaders = []
 
@@ -64,12 +124,23 @@ def load_documents():
         )
     )
 
-    # Loader for .md files
+    # Loader for .md files (using TextLoader instead of UnstructuredMarkdownLoader)
     loaders.append(
         DirectoryLoader(
             str(DATA_DIR),
             glob="**/*.md",
-            loader_cls=UnstructuredMarkdownLoader,
+            loader_cls=TextLoader,
+            loader_kwargs={"encoding": "utf-8"},
+            show_progress=True,
+        )
+    )
+
+    # Loader for .pdf files
+    loaders.append(
+        DirectoryLoader(
+            str(DATA_DIR),
+            glob="**/*.pdf",
+            loader_cls=PyMuPDFLoader,
             show_progress=True,
         )
     )
@@ -87,10 +158,25 @@ def load_documents():
     # Validation check
     if not documents:
         print("⚠ No documents found in 'data/' directory.")
-        print("👉 Add .txt or .md files and run again.")
+        print("👉 Add .txt, .md, or .pdf files and run again.")
         raise SystemExit(1)
 
-    print(f"✓ Loaded {len(documents)} document(s)")
+    # ── Attach metadata from folder hierarchy ─────────────────────
+    for doc in documents:
+        source = doc.metadata.get("source", "")
+        path_meta = _extract_metadata_from_path(source)
+        doc.metadata.update(path_meta)
+
+    # ── Print summary ─────────────────────────────────────────────
+    subject_counts = Counter(
+        doc.metadata.get("subject", "unknown") for doc in documents
+    )
+    print(f"\n✓ Loaded {len(documents)} document(s) total")
+    print("  Documents per subject:")
+    for subject, count in sorted(subject_counts.items()):
+        print(f"    • {subject}: {count}")
+    print()
+
     return documents
 
 
