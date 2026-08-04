@@ -157,8 +157,8 @@ def load_documents():
 
     # Validation check
     if not documents:
-        print("⚠ No documents found in 'data/' directory.")
-        print("👉 Add .txt, .md, or .pdf files and run again.")
+        print("No documents found in 'data/' directory.")
+        print("Add .txt, .md, or .pdf files and run again.")
         raise SystemExit(1)
 
     # ── Attach metadata from folder hierarchy ─────────────────────
@@ -171,7 +171,7 @@ def load_documents():
     subject_counts = Counter(
         doc.metadata.get("subject", "unknown") for doc in documents
     )
-    print(f"\n✓ Loaded {len(documents)} document(s) total")
+    print(f"\n Loaded {len(documents)} document(s) total")
     print("  Documents per subject:")
     for subject, count in sorted(subject_counts.items()):
         print(f"    • {subject}: {count}")
